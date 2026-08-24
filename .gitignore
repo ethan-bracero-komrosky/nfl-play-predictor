@@ -1,0 +1,27 @@
+# data
+data/*
+!data/.gitkeep
+
+# models
+models/*
+!models/.gitkeep
+*.pkl
+*.joblib
+*.h5
+
+# notebook checkpoints
+.ipynb_checkpoints/
+
+# venv / conda
+venv/
+.venv/
+env/
+conda-meta/
+*.egg-info/
+
+# python
+__pycache__/
+*.pyc
+
+# os
+.DS_Store
