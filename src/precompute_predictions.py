@@ -41,6 +41,7 @@ RAW_COLS = [
     "half_seconds_remaining", "game_half", "quarter_seconds_remaining",
     "home_timeouts_remaining", "away_timeouts_remaining", "posteam_type",
     "shotgun", "no_huddle", "posteam", "defteam", "wp", "ep", "play_type", "desc",
+    "yards_gained",
 ]
 
 GAME_MARKER_DESCS = {"GAME", "END GAME"}
@@ -137,6 +138,7 @@ def write_to_db(rows: list[dict], db_path: Path) -> None:
                 predicted_prob_pass REAL,
                 predicted_label TEXT,
                 actual_play_type TEXT,
+                yards_gained REAL,
                 is_scored INTEGER NOT NULL,
                 skip_reason TEXT,
                 UNIQUE(game_id, play_index)
@@ -148,11 +150,11 @@ def write_to_db(rows: list[dict], db_path: Path) -> None:
             INSERT INTO play_predictions (
                 game_id, play_index, play_id, quarter, game_clock, down, distance,
                 yardline_100, offense_team, defense_team, predicted_prob_pass,
-                predicted_label, actual_play_type, is_scored, skip_reason
+                predicted_label, actual_play_type, yards_gained, is_scored, skip_reason
             ) VALUES (
                 :game_id, :play_index, :play_id, :quarter, :game_clock, :down, :distance,
                 :yardline_100, :offense_team, :defense_team, :predicted_prob_pass,
-                :predicted_label, :actual_play_type, :is_scored, :skip_reason
+                :predicted_label, :actual_play_type, :yards_gained, :is_scored, :skip_reason
             )
             """,
             rows,
@@ -192,6 +194,7 @@ def main() -> None:
             "predicted_prob_pass": float(prob_pass[i]) if pd.notna(prob_pass[i]) else None,
             "predicted_label": label[i],
             "actual_play_type": r["play_type"],
+            "yards_gained": float(r["yards_gained"]) if pd.notna(r["yards_gained"]) else None,
             "is_scored": int(scoreable_mask[i]),
             "skip_reason": r["skip_reason"],
         }
