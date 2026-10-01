@@ -100,6 +100,15 @@ def render_playback_toggle() -> None:
         st.session_state.playing = not st.session_state.playing
 
 
+def render_scoreboard(row: pd.Series) -> None:
+    # Score at the snap; the delta arrow shows points scored on this play.
+    away, home = st.columns(2)
+    for col, side in ((away, "away"), (home, "home")):
+        points = row[f"{side}_score_after"] - row[f"{side}_score_before"]
+        col.metric(row[f"{side}_team"], int(row[f"{side}_score_before"]),
+                   delta=int(points) if points > 0 else None)
+
+
 def render_play_card(row: pd.Series) -> None:
     st.subheader(f"Q{row.quarter} — {row.game_clock or ''}")
     c1, c2, c3 = st.columns(3)
@@ -249,6 +258,7 @@ def render_play_viewer(plays: pd.DataFrame) -> None:
             st.session_state.play_idx = idx
 
         row = plays.iloc[st.session_state.play_idx]
+        render_scoreboard(row)
         render_play_card(row)
         render_field(row)
 

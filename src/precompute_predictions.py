@@ -47,6 +47,7 @@ RAW_COLS = [
     "home_timeouts_remaining", "away_timeouts_remaining", "posteam_type",
     "shotgun", "no_huddle", "posteam", "defteam", "wp", "ep", "play_type", "desc",
     "yards_gained", "two_point_attempt", "season", "game_date",
+    "home_team", "away_team", "total_home_score", "total_away_score",
 ]
 
 GAME_MARKER_DESCS = {"GAME", "END GAME"}
@@ -80,6 +81,14 @@ def fetch_game_pbp(
     if game.empty:
         raise ValueError(f"No play-by-play rows found for game_id={game_id!r}")
     game = game.sort_values("play_id").reset_index(drop=True)
+
+    # total_*_score is the score after each play; the previous row's is the score at the snap.
+    # Some timeout rows carry a stale, lower score; scores never drop, so take the running max.
+    if game[["total_home_score", "total_away_score"]].isna().any().any():
+        raise ValueError("Missing score on a play-by-play row")
+    for side in ("home", "away"):
+        game[f"{side}_score_after"] = game[f"total_{side}_score"].cummax().astype(int)
+        game[f"{side}_score_before"] = game[f"{side}_score_after"].shift(fill_value=0)
 
     # Drop non-play sentinel rows (kickoff/quarter/game markers with no play_type).
     is_marker = game["play_type"].isna() & (
@@ -153,8 +162,11 @@ def write_to_db(rows: list[dict], db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     try:
+        # replay.db is rebuilt from nflverse on every run, so recreate the table
+        # instead of migrating it when columns change.
+        conn.execute("DROP TABLE IF EXISTS play_predictions")
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS play_predictions (
+            CREATE TABLE play_predictions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 game_id TEXT NOT NULL,
                 play_index INTEGER NOT NULL,
@@ -172,20 +184,29 @@ def write_to_db(rows: list[dict], db_path: Path) -> None:
                 yards_gained REAL,
                 is_scored INTEGER NOT NULL,
                 skip_reason TEXT,
+                home_team TEXT NOT NULL,
+                away_team TEXT NOT NULL,
+                home_score_before INTEGER NOT NULL,
+                away_score_before INTEGER NOT NULL,
+                home_score_after INTEGER NOT NULL,
+                away_score_after INTEGER NOT NULL,
                 UNIQUE(game_id, play_index)
             )
         """)
-        conn.execute("DELETE FROM play_predictions WHERE game_id = ?", (rows[0]["game_id"],))
         conn.executemany(
             """
             INSERT INTO play_predictions (
                 game_id, play_index, play_id, quarter, game_clock, down, distance,
                 yardline_100, offense_team, defense_team, predicted_prob_pass,
-                predicted_label, actual_play_type, yards_gained, is_scored, skip_reason
+                predicted_label, actual_play_type, yards_gained, is_scored, skip_reason,
+                home_team, away_team, home_score_before, away_score_before,
+                home_score_after, away_score_after
             ) VALUES (
                 :game_id, :play_index, :play_id, :quarter, :game_clock, :down, :distance,
                 :yardline_100, :offense_team, :defense_team, :predicted_prob_pass,
-                :predicted_label, :actual_play_type, :yards_gained, :is_scored, :skip_reason
+                :predicted_label, :actual_play_type, :yards_gained, :is_scored, :skip_reason,
+                :home_team, :away_team, :home_score_before, :away_score_before,
+                :home_score_after, :away_score_after
             )
             """,
             rows,
@@ -232,6 +253,12 @@ def main() -> None:
             "yards_gained": float(r["yards_gained"]) if pd.notna(r["yards_gained"]) else None,
             "is_scored": int(scoreable_mask[i]),
             "skip_reason": r["skip_reason"],
+            "home_team": r["home_team"],
+            "away_team": r["away_team"],
+            "home_score_before": int(r["home_score_before"]),
+            "away_score_before": int(r["away_score_before"]),
+            "home_score_after": int(r["home_score_after"]),
+            "away_score_after": int(r["away_score_after"]),
         }
         for i, r in game.iterrows()
     ]
