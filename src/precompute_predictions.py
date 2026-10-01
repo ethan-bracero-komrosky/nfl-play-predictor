@@ -13,6 +13,11 @@ import numpy as np
 import pandas as pd
 from xgboost import XGBClassifier
 
+if __package__:
+    from .proe import build_proe_features
+else:
+    from proe import build_proe_features
+
 GAME_ID = "2025_16_LA_SEA"
 MODEL_PATH = Path("models/xgb_run_pass_model.json")
 DB_PATH = Path("data/replay.db")
@@ -29,10 +34,10 @@ TEAM_COLS = [
 ]
 
 FEATURE_COLS = [
-    "down", "ydstogo", "yardline_100", "goal_to_go", "score_differential", "qtr",
+    "down", "two_point_attempt", "ydstogo", "yardline_100", "goal_to_go", "score_differential", "qtr",
     "game_seconds_remaining", "half_seconds_remaining", "game_half",
     "quarter_seconds_remaining", "posteam_timeouts_remaining",
-    "defteam_timeouts_remaining", "shotgun", "no_huddle", "wp", "ep",
+    "defteam_timeouts_remaining", "shotgun", "no_huddle", "proe", "wp", "ep",
 ] + TEAM_COLS
 
 RAW_COLS = [
@@ -41,7 +46,7 @@ RAW_COLS = [
     "half_seconds_remaining", "game_half", "quarter_seconds_remaining",
     "home_timeouts_remaining", "away_timeouts_remaining", "posteam_type",
     "shotgun", "no_huddle", "posteam", "defteam", "wp", "ep", "play_type", "desc",
-    "yards_gained",
+    "yards_gained", "two_point_attempt", "season", "game_date",
 ]
 
 GAME_MARKER_DESCS = {"GAME", "END GAME"}
@@ -50,15 +55,28 @@ GAME_MARKER_DESCS = {"GAME", "END GAME"}
 def load_model(path: Path) -> XGBClassifier:
     model = XGBClassifier()
     model.load_model(path)
+    if model.get_booster().feature_names != FEATURE_COLS:
+        raise ValueError("Model features do not match; rerun the notebook to retrain and export the model")
+    for key in ("proe_history_start_year", "proe_training_end_year"):
+        if model.get_booster().attr(key) is None:
+            raise ValueError("Model is missing its PROE history window; rerun the notebook export")
     return model
 
 
-def fetch_game_pbp(game_id: str) -> pd.DataFrame:
+def fetch_game_pbp(
+    game_id: str, *, history_start_year: int, training_end_year: int,
+) -> pd.DataFrame:
     import nflreadpy as nfl
 
     season = int(game_id.split("_")[0])
-    pbp = nfl.load_pbp([season]).to_pandas()
-    game = pbp[pbp["game_id"] == game_id][RAW_COLS].copy()
+    seasons = list(range(history_start_year, max(season, training_end_year) + 1))
+    pbp = nfl.load_pbp(seasons).select(RAW_COLS).to_pandas()
+    run_pass = pbp[pbp["play_type"].isin(["run", "pass"])]
+    history_features = build_proe_features(
+        run_pass, history_start_year=history_start_year, training_end_year=training_end_year,
+    )
+    pbp["proe"] = history_features["proe"]
+    game = pbp[pbp["game_id"] == game_id][RAW_COLS + ["proe"]].copy()
     if game.empty:
         raise ValueError(f"No play-by-play rows found for game_id={game_id!r}")
     game = game.sort_values("play_id").reset_index(drop=True)
@@ -72,10 +90,12 @@ def fetch_game_pbp(game_id: str) -> pd.DataFrame:
 
 def classify_play(row: pd.Series) -> str | None:
     """Return None if scoreable, else a reason the play can't be scored."""
-    if row["play_type"] in ("pass", "run") and pd.notna(row["down"]):
-        return None
-    if pd.isna(row["down"]) and row["play_type"] in ("pass", "run"):
-        return "two_point_conversion"
+    if row["play_type"] in ("pass", "run"):
+        if pd.isna(row["two_point_attempt"]) or row["two_point_attempt"] not in (0, 1):
+            return "invalid_two_point_attempt"
+        if pd.notna(row["down"]) or row["two_point_attempt"] == 1:
+            return None
+        return "missing_down"
     if row["play_type"] in ("punt", "field_goal", "extra_point", "kickoff"):
         return "special_teams"
     if row["play_type"] == "no_play":
@@ -88,6 +108,14 @@ def classify_play(row: pd.Series) -> str | None:
 def build_features(scoreable: pd.DataFrame) -> pd.DataFrame:
     df = scoreable.copy()
 
+    if not df["two_point_attempt"].isin([0, 1]).all():
+        raise ValueError("Unexpected two_point_attempt values or nulls")
+    two_point_mask = df["two_point_attempt"].eq(1)
+    missing_down = df["down"].isna()
+    if (missing_down & ~two_point_mask).any():
+        raise ValueError("Missing down on a regular run/pass play")
+    df.loc[two_point_mask & missing_down, "down"] = 0
+
     df["posteam_timeouts_remaining"] = np.where(
         df["posteam_type"] == "home", df["home_timeouts_remaining"], df["away_timeouts_remaining"]
     )
@@ -98,13 +126,16 @@ def build_features(scoreable: pd.DataFrame) -> pd.DataFrame:
     df["game_half"] = df["game_half"].map({"Half1": 0, "Half2": 1}).fillna(2)
 
     int_cols = [
-        "down", "ydstogo", "yardline_100", "goal_to_go", "score_differential", "qtr",
+        "down", "two_point_attempt", "ydstogo", "yardline_100", "goal_to_go", "score_differential", "qtr",
         "game_seconds_remaining", "half_seconds_remaining", "quarter_seconds_remaining",
         "posteam_timeouts_remaining", "defteam_timeouts_remaining", "shotgun", "no_huddle",
         "game_half",
     ]
     for col in int_cols:
         df[col] = df[col].astype(int)
+
+    if not df["proe"].between(-1, 1).all():
+        raise ValueError("Missing or invalid historical PROE feature")
 
     for col in TEAM_COLS:
         df[col] = (df["posteam"] == col.removeprefix("posteam_")).astype(int)
@@ -166,7 +197,11 @@ def write_to_db(rows: list[dict], db_path: Path) -> None:
 
 def main() -> None:
     model = load_model(MODEL_PATH)
-    game = fetch_game_pbp(GAME_ID)
+    game = fetch_game_pbp(
+        GAME_ID,
+        history_start_year=int(model.get_booster().attr("proe_history_start_year")),
+        training_end_year=int(model.get_booster().attr("proe_training_end_year")),
+    )
 
     game["skip_reason"] = game.apply(classify_play, axis=1)
     scoreable_mask = game["skip_reason"].isna()
