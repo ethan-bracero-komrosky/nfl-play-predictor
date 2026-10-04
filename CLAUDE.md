@@ -75,6 +75,29 @@ what changed, what's still open, what to do next. When resuming, read the
 top entry (and the plan file it points to, if any) before doing anything
 else.
 
+### 2026-10-04
+
+Reran the notebook on the newest 2026 data and updated its markdown and the
+README (commit "update for Week 4 TNF"). Test set is now 5,955 plays: Weeks
+1–3 plus only Week 4's Thursday game (`2026_04_PIT_CLE`) — Sunday games
+weren't published yet. Shipped XGBoost (2021–2025): 73.82% (was 73.80%);
+always-pass 57.26%. Rankings unchanged.
+
+Cell 128 used to `assert` that the saved no-PROE baseline
+(`data/training_range_comparison_2026.json`) had the same play counts; that
+file is from the Week 1 run (1,911 plays), so the assert crashed. It now
+prints a skip message instead. The "+0.52 pp from PROE" figure in cell 129
+is labeled as a Week 1-only result.
+
+Not done: `data/replay.db` not regenerated (training data unchanged, so
+predictions should match); no current PROE-gain measurement (would need
+code to rebuild the no-PROE baseline on the new test set).
+
+**Next**: once full Week 4 is published, rerun the notebook and hand-update
+README + notebook markdown numbers (cells 98, 104, 109, 114, 124, 127, 129
+cite the test set; 28/48/63/93 cite total play counts). README should then
+drop the "Thursday night game only" note.
+
 ### 2026-08-28
 
 Investigated (not yet implemented) the replay dashboard's flash/scroll-jump
