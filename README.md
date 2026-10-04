@@ -8,8 +8,8 @@ Given pre-snap game state — down, distance, field position, score differential
 
 **Phase 1 (data science) — done. Phase 2 (ETL) — partial. Phase 4 (replay dashboard) — built, polishing.**
 
-- Trained and compared Logistic Regression, Random Forest, and XGBoost on 2016–2025 play-by-play data, testing on the held-out **2026** season
-- Shipped model: **XGBoost trained on 2021–2025 — 73.8% accuracy** on 5,829 2026 plays (always guessing "pass" scores 57.1%)
+- Trained and compared Logistic Regression, Random Forest, and XGBoost on 2016–2025 play-by-play data, testing on the **2026 season through Week 4 (5,955 plays)** — Week 4 is only the Thursday night game so far
+- Shipped model: **XGBoost trained on 2021–2025 — 73.8% accuracy** on 5,955 2026 plays (always guessing "pass" scores 57.3%)
 - Added a rolling **Pass Rate Over Expected (PROE)** team-tendency feature (`src/proe.py`, unit-tested in `tests/`)
 - Two-point conversions are now kept and scored, flagged by a `two_point_attempt` input
 - Trained model exported to `models/xgb_run_pass_model.json`, with its PROE history window stored in the model file so replay reproduces the same features
@@ -18,18 +18,18 @@ Given pre-snap game state — down, distance, field position, score differential
 
 See `notebooks/` for the full modeling notebook.
 
-## Results (2026 test season)
+## Results (2026 through Week 4)
 
-Test set: 5,829 run/pass plays from 2026 (15 of them two-point attempts). Each training range gets its own PROE history.
+Test set: 5,955 run/pass plays from the 2026 season through Week 4 (17 of them two-point attempts). Week 4 includes only the Thursday night game so far. Each training range gets its own PROE history.
 
 | Training range | Training plays | Logistic Regression | Random Forest | XGBoost |
 |---|---|---|---|---|
 | 2016–2025 | 344,820 | 72.8% | 72.9% | 73.7% |
-| 2019–2025 | 244,232 | 72.9% | 72.6% | 73.8% |
-| **2021–2025** | 176,478 | 72.9% | 72.7% | **73.8%** |
+| 2019–2025 | 244,232 | 72.9% | 72.6% | 73.7% |
+| **2021–2025** | 176,478 | 72.9% | 72.8% | **73.8%** |
 
 - XGBoost wins in every training range, by about 1 percentage point
-- More history doesn't help: for XGBoost, 2021–2025 matches or beats 2016–2025 with about half the plays
+- More history doesn't help: for XGBoost, 2021–2025 beats 2016–2025 with about half the plays
 - Shipped model (XGBoost, 2021–2025): balanced accuracy 73.7%, macro F1 73.5%; pass recall 0.75, run recall 0.73
 - A yards-to-go bucket feature (short/medium/long/…) was tested and dropped — it added nothing for XGBoost and hurt the other two models
 
